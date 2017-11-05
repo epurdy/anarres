@@ -77,10 +77,11 @@ def derivative_of_dcg_currents(v_dcg, i_dcg,
     # rv = rho_of_s * f_dcg - gamma * rho_of_oms * i_dcg
     rv = rho_of_oms * f_dcg - gamma * rho_of_s * i_dcg
 
-    print 's', s
-    print 'i_dcg', i_dcg
-    print 'f_dcg', f_dcg
-    print 'rv', rv
+    # print 's', s
+    # print 'v_dcg', v_dcg
+    # print 'i_dcg', i_dcg
+    # print 'f_dcg', f_dcg
+    # print 'rv', rv
 
     return rv
 

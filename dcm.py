@@ -30,6 +30,7 @@ import numpy as np
 from vcdcg import smooth_step_function_np
 
 def memristor_conductance(x, r_on=1.0, r_off=2.0):
+    x = np.clip(x, 0, 1)
     resistance = r_on + (r_off - r_on) * x
     assert (resistance > 0).all()
     return 1.0 / resistance
@@ -98,4 +99,5 @@ def test_single_dcm():
     plt.savefig('dcm.png')
 
 
-test_single_dcm()
+if __name__ == '__main__':
+    test_single_dcm()

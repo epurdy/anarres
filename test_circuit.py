@@ -17,6 +17,7 @@ def test_circuit_resistance():
     mna = crkt.assemble_mna_equation()
     stuff = mna.simulate(10.0, 0.1)
 
+    crkt.draw()
     plt.savefig('crkt1.png')
 
     
