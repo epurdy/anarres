@@ -31,6 +31,9 @@ def derivative_of_dcg_variables(i_dcg, s,
     term2 = k_i * (1 - smooth_step_function_np(thing1).prod() 
                    - smooth_step_function_np(thing2).prod())
 
+    # experiment
+    term2 = -term2
+
     # print term1, term2
 
     return term1 + term2

@@ -1,5 +1,8 @@
-from util import get_next_id
-from components.component import TwoNodeCircuitComponent
+from anarres.util import get_next_id
+from anarres.components.component import TwoNodeCircuitComponent
+from anarres.components.capacitor import Capacitor
+from anarres.circuit import Var, FuncStamp2, FuncStamp1, ConstStamp2
+import anarres.dcm as dcm
 
 
 class Memristor(TwoNodeCircuitComponent):

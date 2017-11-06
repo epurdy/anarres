@@ -4,52 +4,55 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-import circuit
-
+from circuit import Circuit, Var
+from components.all import Resistor, Capacitor, VoltageSource
 
 def test_circuit_resistance():
-    crkt = circuit.Circuit()
-    battery = circuit.VoltageSource(crkt, 9)  # 9 volts
-    resistor = circuit.Resistor(crkt, 10)  # 1 ohm    
+    circuit = Circuit()
+    battery = VoltageSource(circuit, 9)  # 9 volts
+    resistor = Resistor(circuit, 10)  # 1 ohm    
     battery.negative = resistor.positive
-    battery.positive = resistor.negative = crkt._ground
-    print crkt.graph.edges()
-    mna = crkt.assemble_mna_equation()
+    battery.positive = resistor.negative = circuit._ground
+    print circuit.graph.edges()
+    mna = circuit.assemble_mna_equation()
     stuff = mna.simulate(10.0, 0.1)
 
-    crkt.draw()
+    circuit.draw()
     plt.savefig('crkt1.png')
 
     
 def test_circuit_capacitance():
-    crkt = circuit.Circuit()
-    battery = circuit.VoltageSource(crkt, 9)
-    resistor = circuit.Resistor(crkt, 1)
-    capacitor = circuit.Capacitor(crkt, 1e-1)
+    circuit = Circuit()
+    battery = VoltageSource(circuit, 9)
+    resistor = Resistor(circuit, 1)
+    capacitor = Capacitor(circuit, 1e-1)
     battery.positive = resistor.positive
     resistor.negative = capacitor.positive
-    capacitor.negative = battery.negative = crkt._ground
+    capacitor.negative = battery.negative = circuit._ground
 
-    mna = crkt.assemble_mna_equation()
-    stuff = mna.simulate_be(1e0, 1e-3, x0=[0, 9, 0], vars=['node_7', 'node_3'])
+    mna = circuit.assemble_mna_equation()
+    stuff = mna.simulate_be(1e0, 1e-3, 
+                            vars=[Var(resistor.negative, 'v'),
+                                  Var(resistor.positive, 'v')])
 
     plt.plot(stuff)
     plt.savefig('cap.png')
 
     plt.figure()
-    crkt.draw()
+    circuit.draw()
     plt.savefig('crkt2.png')
 
 def test_circuit_parallel_resistor_capacitor():
-    crkt = circuit.Circuit()
-    battery = circuit.VoltageSource(crkt, 9)
-    resistor = circuit.Resistor(crkt, 1)
-    capacitor = circuit.Capacitor(crkt, 1e-1)  # 1 microFarad
+    circuit = Circuit()
+    battery = VoltageSource(circuit, 9)
+    resistor = Resistor(circuit, 1)
+    capacitor = Capacitor(circuit, 1e-1)  # 1 microFarad
     battery.negative = resistor.positive = capacitor.positive
-    battery.positive = resistor.negative = capacitor.negative = crkt._ground
+    battery.positive = resistor.negative = capacitor.negative = circuit._ground
 
-    mna = crkt.assemble_mna_equation()
-    stuff = mna.simulate_be(1e0, 1e-3, x0=[9, 0], vars=['V_2'])
+    mna = circuit.assemble_mna_equation()
+    stuff = mna.simulate_be(1e0, 1e-3, 
+                            vars=[Var(battery.id, 'i')])
 
     print mna.rev_idict
 
@@ -57,7 +60,7 @@ def test_circuit_parallel_resistor_capacitor():
     plt.savefig('cap_par.png')
 
     plt.figure()
-    crkt.draw()
+    circuit.draw()
     plt.savefig('crkt3.png')
 
 

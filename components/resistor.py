@@ -1,5 +1,6 @@
 from util import get_next_id
 from components.component import TwoNodeCircuitComponent
+from circuit import Var, ConstStamp2, ConstStamp1
 
 
 class Resistor(TwoNodeCircuitComponent):
