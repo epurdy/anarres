@@ -1,3 +1,13 @@
+"""This circuit simulator handles non-linear systems with extra variables. 
+
+This implementation is based on Najm's "Circuit Simulation", although I am
+ignoring half of his advice and he should bear none of the blame for its
+inadequacies.
+
+TODO: We need some way of grouping variables or sth so that we can have numpy
+handle things efficiently.
+"""
+
 from abc import ABCMeta, abstractmethod
 from collections import defaultdict
 import matplotlib.pyplot as plt
@@ -7,42 +17,19 @@ import scipy
 
 import dcm
 import vcdcg
+from util import get_next_id
 
-"""circuit.py can handle linear systems with no time dependence and no extra variables. 
-
-this should handle non-linear systems with extra variables. I don't think we
-need explicit time dependence.
-
-the MNA equation goes from being Ax + Bx' = c with A, B, c constant numpy
-arrays to A,B,c being collections of stamps. A stamp is an i, j pair and a
-function to call to get the value of the thing.
-
-Need some way to registre variables so that the MNA equation knows what its
-variables are.
-
-Also, it seems like the symmetry of the is and the js breaks down... i is
-really indexing into equations and j is indexing into variables; but, the
-variables happen to be in 1-1 corr with the equations for now... not sure why
-or if this is a general phenomenon.
-
-We need some way of grouping variables or sth so that we can have numpy handle
-things efficiently.
-
-"""
 
 R_ON = 0.1
 R_OFF = 0.2
 
 
-NEXT_ID = 0
-def get_next_id(typ):
-    global NEXT_ID
-    rv = '%s_%06d' % (typ, NEXT_ID)
-    NEXT_ID += 1
-    print('ID', rv)
-    return rv
-
 class Var(object):
+    """A variable consists of an id and a quantity. The three quantities currently
+    used are 'v' for voltage (measured at nodes), 'i' for current (measured
+    through some, but not all, components), and 'h' for hidden variables such
+    as the memory of a memristor (measured at the component in question).
+    """
     def __init__(self, id, quantity):
         self.id = id
         self.quantity = quantity
@@ -59,7 +46,27 @@ class Var(object):
     def __hash__(self):
         return hash(str(self))
 
-class FuncStamp1(object):
+
+class Stamp(object):
+    """A stamp is a concept used in most circuit simulators. A stamp represents the
+    contributions of a circuit element to the differential algebraic system
+    governing the circuit.
+
+    This DAS has the form
+
+        A(x) x + B(x) x' = c(x)
+
+    where A, B are n x n matrices and c is a n-dimensional vector.
+
+    For some circuits containing only simple elements, A, B, and c are
+    constants. In general, they depend on things like voltage, current, and
+    hidden variables.
+    """
+    pass
+
+
+class FuncStamp1(Stamp):
+    """A dynamic stamp intended to populate c(x)."""
     def __init__(self, ivar, fn, input_vars):
         self.ivar = ivar
         self.fn = fn
@@ -77,6 +84,7 @@ class FuncStamp1(object):
         return self.fn(*inputs)
 
 class FuncStamp2(FuncStamp1):
+    """A dynamic stamp intended to populate A(x) or B(x)."""
     def __init__(self, ivar, jvar, fn, input_vars):
         self.ivar = ivar
         self.jvar = jvar
@@ -86,7 +94,8 @@ class FuncStamp2(FuncStamp1):
     def __repr__(self):
         return 'FuncStamp2({}, {}, {})'.format(self.ivar, self.jvar, self.fn.__name__)
 
-class ConstStamp1(object):
+class ConstStamp1(Stamp):
+    """A constant stamp intended to populate c(x)."""
     def __init__(self, ivar, val):
         self.ivar = ivar
         self.val = val
@@ -98,6 +107,7 @@ class ConstStamp1(object):
         return self.val
 
 class ConstStamp2(ConstStamp1):
+    """A constant stamp intended to populate A(x) or B(x)."""
     def __init__(self, ivar, jvar, val):
         self.ivar = ivar
         self.jvar = jvar
@@ -108,10 +118,21 @@ class ConstStamp2(ConstStamp1):
 
 
 class MnaEquation(object):
+    """The differential algebraic system governing the behavior of the circuit, and
+    methods for solving it.
+
+    This DAS has the form
+
+        A(x) x + B(x) x' = c(x)
+
+    where A, B are n x n matrices and c is a n-dimensional vector.
+
+    Currently, the only method for solving is the Backwards Euler method.
+    """
     def __init__(self, A, B, c, rev_vdict, rev_idict, rev_hdict):
-        self.A = A
-        self.B = B
-        self.c = c
+        self.Astamps = A
+        self.Bstamps = B
+        self.cstamps = c
         self.rev_vdict = rev_vdict
         self.rev_idict = rev_idict
         self.rev_hdict = rev_hdict
@@ -120,6 +141,10 @@ class MnaEquation(object):
         self.nh = len(self.rev_hdict)
         self.n = self.nv + self.ni + self.nh
 
+        self.sparse = False
+
+        # construct a lookup table for variables so that we know what
+        # coordinate each corresponds to.
         self.var_lut = {}
         for k in self.rev_vdict:
             self.var_lut[Var(k, 'v')] = self.rev_vdict[k]
@@ -128,9 +153,14 @@ class MnaEquation(object):
         for k in self.rev_hdict:
             self.var_lut[Var(k, 'h')] = self.rev_hdict[k]
 
-    def mat(self, stamps, x):
-        #rv = np.zeros((self.n, self.n))
-        rv = scipy.sparse.dok_matrix((self.n, self.n), dtype=np.float32)
+    def _mat(self, stamps, x):
+        """Populate a matrix given a set of stamps and an x to pass in to the stamps.
+        """
+        if self.sparse:
+            rv = scipy.sparse.dok_matrix((self.n, self.n), dtype=np.float32)
+        else:
+            rv = np.zeros((self.n, self.n))
+
         for stamp in stamps:
             i = self.var_lut[stamp.ivar]
             j = self.var_lut[stamp.jvar]
@@ -141,18 +171,25 @@ class MnaEquation(object):
 
             val = stamp(x, self.var_lut)
             rv[i, j] += val
-        return rv.tocoo()
+
+        if self.sparse:
+            rv = rv.tocoo()
+
+        return rv
 
     def Amat(self, x):
-        return self.mat(self.A, x)
+        """Compute the matrix A"""
+        return self._mat(self.Astamps, x)
 
     def Bmat(self, x):
-        return self.mat(self.B, x)
+        """Compute the matrix B"""
+        return self._mat(self.Bstamps, x)
 
-    def cmat(self, x):
+    def cvec(self, x):
+        """Compute the vector c by populating the vector using self.cstamps."""
         rv = np.zeros(self.n)
-        #rv = scipy.sparse.dok_matrix(self.n, dtype=np.float32)
-        for stamp in self.c:
+
+        for stamp in self.cstamps:
             i = self.var_lut[stamp.ivar]
 
             # don't include ground
@@ -161,24 +198,42 @@ class MnaEquation(object):
 
             val = stamp(x, self.var_lut)
             rv[i] += val
+
         return rv
 
     def simulate_be(self, tmax, dt, x0=None, vars=None):
+        """Simulate the equations from a given starting point using the Backwards Euler
+        method.
+
+        Args:
+          tmax: Amount of time to simulate for.
+          dt: The time step
+          x0: Initial conditions (optional). If not provided, we will start
+              from a state with zero current, very small random voltages (to
+              break symmetries), and random hidden variables distributed in [0,
+              1]
+          vars: A list of variables whose values we want to know (optional). If
+                not provided, all variables will be returned.
+        """
+        # set initial conditions
         if x0 is None:
-            xm1 = np.zeros(self.n)
-            x, res, rank, _ = np.linalg.lstsq(self.Amat(xm1), self.cmat(xm1))
+            x = np.concatenate(
+                [1e-6 * np.random.randn(self.nv),
+                 np.zeros(self.ni),
+                 np.random.random(self.nh)])
         else:
             x = np.array(x0)
 
+        # figure out which indices of x to expose to the caller 
         if vars is None:
             indices = range(self.n)
         else:
             indices = [self.var_lut[k] for k in vars]
 
+        # the values to return at the end
         xs = [x[indices]]
-        t = 0.0
 
-        thresh = 10.0
+        t = 0.0
         while t < tmax:
             print t
 
@@ -189,33 +244,48 @@ class MnaEquation(object):
                 # (A(x) + B(x)/dt) x = c(x) + B(x)/dt oldx
                 A = self.Amat(x)
                 B = self.Bmat(x)
-                c = self.cmat(x)
-                #return (A + B/dt).dot(x) - c - (B/dt).dot(oldx)
+                c = self.cvec(x)
                 return A.dot(x) + B.dot(x - oldx) / dt - c
 
+            # use Newton's method to find the solution to the DAS using the BE
+            # discretization
             x, info, ier, mesg = scipy.optimize.fsolve(f, oldx, full_output=True)
-#                                                       maxfev=3 * (self.n + 1))
             print np.linalg.norm(f(x))
             print mesg
 
-            #x += 1e-6 * np.random.randn(self.n)
-            
+            # remember the variables we wish to remember, and report their current values
             xs.append(list(x[indices]))
             print zip(vars, xs[-1])
+
+            # step time forward
             t += dt
 
         xs = np.array(xs)
-        print xs.shape
-        print xs
 
         return xs
 
+
 class Circuit(object):
-    def __init__(self):
+    """A circuit. This class is mainly used to build up a circuit in an
+    object-oriented way. When the circuit is ready, call
+    assemble_mna_equation() to get the MNA equation that will allow you to
+    simulate the circuit.
+    """
+    def __init__(self, layout_algorithm='circular'):
         self.id = get_next_id('crkt')
+
+        # graph where nodes are nodes and edges are two-terminal components
         self.graph = nx.MultiDiGraph()
+
+        self.layout_algorithm = layout_algorithm
+
+        # list of components and lookup table for components
         self.components = []
-        self.item_lut = dict()
+        self.component_lut = dict()
+
+        # lookup table for nodes (necessary because nodes are constantly
+        # getting collapsed with one another and stale names for nodes exist
+        # outside of this class and must be handled correctly)
         self.node_lut = dict()
         
         # add ground
@@ -223,25 +293,40 @@ class Circuit(object):
         self.add_node(self._ground)
 
     def draw(self):
+        # graph is significantly easier to understand without the ground node
         graph = self.graph.copy()
         graph.remove_node(self._ground)
-        # pos = nx.drawing.layout.spring_layout(self.graph)
-        # pos = nx.drawing.layout.circular_layout(self.graph)
-        pos = nx.drawing.layout.shell_layout(self.graph)
-        # pos = nx.drawing.layout.spectral_layout(graph)
+
+        # select a layout algorithm
+        if self.layout_algorithm == 'spring':
+            pos = nx.drawing.layout.spring_layout(self.graph)
+        elif self.layout_algorithm == 'circular':
+            pos = nx.drawing.layout.circular_layout(self.graph)
+        elif self.layout_algorithm == 'shell':
+            pos = nx.drawing.layout.shell_layout(self.graph)
+        elif self.layout_algorithm == 'spectral':
+            pos = nx.drawing.layout.spectral_layout(graph)
+        else:
+            assert False, 'unrecognized layout algorithm: %s' % self.layout_algorithm
+
+        # figure out the edge labels
         edge_labels = defaultdict(lambda: '')
         for edge in graph.edges():
             edge_data = graph.get_edge_data(*edge)
             for idx in edge_data:
-                edge_labels[edge] += edge_data[idx]['data']
+                edge_labels[edge] += " " + edge_data[idx]['data']
+
+        # draw the graph
         nx.draw_networkx(graph, pos, with_labels=True)
         nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels)
         
     def add_node(self, node):
+        """Add a node to the circuit"""
         self.graph.add_node(node)
         self.node_lut[node] = node
         
-    def add_component(self, comp, nodea=None, nodeb=None):
+    def add_component2(self, comp, nodea=None, nodeb=None):
+        """Add a two-terminal component to the circuit"""
         if nodea is not None:
             self.add_node(nodea)
 
@@ -255,13 +340,19 @@ class Circuit(object):
         self.item_lut[comp.id] = comp
 
     def normalize(self):
+        """Make sure that all node ids contained anywhere are fresh.
+        """
         redo = False
         for comp in self.components:
             redo = comp.normalize() or redo
+
+        # Sometimes we have to do multiple rounds of freshening.
         if redo:
             self.normalize()
         
     def merge(self, nodea, nodeb):
+        """Merge two nodes"""
+
         nodea = self.node_lut[nodea]
         nodeb = self.node_lut[nodeb]
 
@@ -273,8 +364,11 @@ class Circuit(object):
         self.graph = nx.contracted_nodes(self.graph, nodea, nodeb, self_loops=False)
 
     def assemble_mna_equation(self):
+        """Create the MnaEquation object needed to simulate the circuit.
+        """
         self.normalize()
 
+        # figure out the variables
         vvars = [x for x in self.graph.nodes() if x != self._ground]
         ivars = [x.id for x in self.components if x.has_current_variable()]
         hvars = [x.id for x in self.components if x.has_hidden_variable()]
@@ -285,342 +379,25 @@ class Circuit(object):
         rev_idict = {id:num + nv for num, id in enumerate(ivars)}
         rev_hdict = {id:num + nv + ni for num, id in enumerate(hvars)}
 
+        # insert a special fake variable for ground voltage, which is always
+        # defined to be zero
         rev_vdict[self._ground] = None
 
         # A x + B x' = c        
-        A = []
-        B = []
-        c = []
+        Astamps = []
+        Bstamps = []
+        cstamps = []
 
         for component in self.components:
-            A.extend(component.Astamp())
-            B.extend(component.Bstamp())
-            c.extend(component.cstamp())
+            Astamps.extend(component.Astamp())
+            Bstamps.extend(component.Bstamp())
+            cstamps.extend(component.cstamp())
 
-        return MnaEquation(A=A, B=B, c=c, 
+        return MnaEquation(A=Astamps, B=Bstamps, c=cstamps, 
                            rev_vdict=rev_vdict, 
                            rev_idict=rev_idict,
                            rev_hdict=rev_hdict)
 
-        
-class CircuitComponent(object):
-    __metaclass__ = ABCMeta
-
-    def __init__(self, crkt):
-        self._circuit = crkt
-
-    def Astamp(self):
-        return []
-
-    def Bstamp(self):
-        return []
-
-    def cstamp(self):
-        return []
-
-    @abstractmethod
-    def has_current_variable(self):
-        pass
-
-    @abstractmethod
-    def has_hidden_variable(self):
-        pass
-
-class TwoNodeCircuitComponent(CircuitComponent):
-    def __init__(self, crkt):
-        super(TwoNodeCircuitComponent, self).__init__(crkt)
-        self._positive = get_next_id('node')
-        self._negative = get_next_id('node')
-        crkt.add_component(self, self._positive, self._negative)
-
-    def normalize(self):
-        redo = False
-        pos = self._circuit.node_lut[self._positive]
-        if self._positive != pos:
-            self._positive = pos
-            redo = True
-
-        neg = self._circuit.node_lut[self._negative]
-        if self._negative != neg:
-            self._negative = neg
-            redo = True
-
-        return redo
-        
-    @property
-    def positive(self):
-        return self._positive
-
-    @positive.setter
-    def positive(self, other):
-        self._circuit.merge(self._positive, other)
-
-    @property
-    def negative(self):
-        return self._negative
-
-    @negative.setter
-    def negative(self, other):
-        self._circuit.merge(self._negative, other)
-
-class ThreeNodeCircuitComponent(CircuitComponent):
-    def __init__(self, crkt):
-        super(ThreeNodeCircuitComponent, self).__init__(crkt)
-        self._node1 = get_next_id('node')
-        self._node2 = get_next_id('node')
-        self._node3 = get_next_id('node')
-        # note that we do not add the component to the circuit's edge set!
-        crkt.add_node(self._node1)
-        crkt.add_node(self._node2)
-        crkt.add_node(self._node3)
-        
-    @property
-    def node1(self):
-        return self._node1
-
-    @node1.setter
-    def node1(self, other):
-        self._circuit.merge(self._node1, other)
-
-    @property
-    def node2(self):
-        return self._node2
-
-    @node2.setter
-    def node2(self, other):
-        self._circuit.merge(self._node2, other)
-
-    @property
-    def node3(self):
-        return self._node3
-
-    @node3.setter
-    def node3(self, other):
-        self._circuit.merge(self._node3, other)
-
-    def normalize(self):
-        redo = False
-
-        node1 = self._circuit.node_lut[self._node1]
-        if self._node1 != node1:
-            self._node1 = node1
-            redo = True
-
-        node2 = self._circuit.node_lut[self._node2]
-        if self._node2 != node2:
-            self._node2 = node2
-            redo = True
-
-        node3 = self._circuit.node_lut[self._node3]
-        if self._node3 != node3:
-            self._node3 = node3
-            redo = True
-
-        return redo
-
-    
-class Resistor(TwoNodeCircuitComponent):
-    """A resistor without an explicit current variable.
-    """
-    def __init__(self, crkt, resistance):
-        self.id = get_next_id('R')
-        super(Resistor, self).__init__(crkt)
-        self.resistance = float(resistance)
-
-    def has_current_variable(self):
-        return False
-
-    def has_hidden_variable(self):
-        return False
-
-    def Astamp(self):
-        posvar = Var(self.positive, 'v')
-        negvar = Var(self.negative, 'v')
-        return [
-            ConstStamp2(posvar, posvar,  1.0 / self.resistance),
-            ConstStamp2(posvar, negvar, -1.0 / self.resistance),
-            ConstStamp2(negvar, posvar, -1.0 / self.resistance),
-            ConstStamp2(negvar, negvar,  1.0 / self.resistance),
-        ]
-
-
-class Resistor2(TwoNodeCircuitComponent):
-    """A resistor with an explicit current variable.
-    """
-    def __init__(self, crkt, resistance):
-        self.id = get_next_id('R')
-        super(Resistor2, self).__init__(crkt)
-        self.resistance = float(resistance)
-
-    def has_current_variable(self):
-        return True
-
-    def has_hidden_variable(self):
-        return False
-
-    def Astamp(self):
-        posvar = Var(self.positive, 'v')
-        negvar = Var(self.negative, 'v')
-        ivar = Var(self.id, 'i')
-        return [
-            ConstStamp2(posvar, ivar,  1),
-            ConstStamp2(negvar, ivar, -1),
-            ConstStamp2(ivar, posvar,  1),
-            ConstStamp2(ivar, negvar, -1),
-            ConstStamp2(ivar, ivar, -self.resistance)
-        ]
-
-
-class Capacitor(TwoNodeCircuitComponent):
-    """A capacitor without an explicit current variable.
-    """
-    def __init__(self, crkt, capacitance):
-        self.id = get_next_id('C')
-        super(Capacitor, self).__init__(crkt)
-        self.capacitance = float(capacitance)
-
-    def has_current_variable(self):
-        return False
-
-    def has_hidden_variable(self):
-        return False
-
-    def Bstamp(self):
-        posvar = Var(self.positive, 'v')
-        negvar = Var(self.negative, 'v')
-        return [
-            ConstStamp2(posvar, posvar,  self.capacitance),
-            ConstStamp2(posvar, negvar, -self.capacitance),
-            ConstStamp2(negvar, posvar, -self.capacitance),
-            ConstStamp2(negvar, negvar,  self.capacitance),
-        ]
-
-
-class Capacitor2(TwoNodeCircuitComponent):
-    """A capacitor with an explicit current variable.
-    """
-    def __init__(self, crkt, capacitance):
-        self.id = get_next_id('C')
-        super(Capacitor2, self).__init__(crkt)
-        self.capacitance = float(capacitance)
-
-    def has_current_variable(self):
-        return True
-
-    def has_hidden_variable(self):
-        return False
-
-    def Astamp(self):
-        posvar = Var(self.positive, 'v')
-        negvar = Var(self.negative, 'v')
-        ivar = Var(self.id, 'i')
-        return [
-            # these do not appear in Najm but seem to be necessary
-            ConstStamp2(posvar, ivar,  1),
-            ConstStamp2(negvar, ivar, -1),
-            ConstStamp2(ivar, posvar,  1),
-            ConstStamp2(ivar, negvar, -1),
-
-            # this one does appear in Najm
-            ConstStamp2(ivar, ivar, 1),
-        ]
-
-    def Bstamp(self):
-        posvar = Var(self.positive, 'v')
-        negvar = Var(self.negative, 'v')
-        ivar = Var(self.id, 'i')
-        return [
-            ConstStamp2(ivar, posvar,  self.capacitance),
-            ConstStamp2(ivar, negvar, -self.capacitance),
-        ]
-
-    
-class VoltageSource(TwoNodeCircuitComponent):
-    """Voltage sources are required to have an explicit current variable."""
-    def __init__(self, crkt, voltage):
-        self.id = get_next_id('V')
-        super(VoltageSource, self).__init__(crkt)
-        self.voltage = voltage
-
-    def has_current_variable(self):
-        return True
-
-    def has_hidden_variable(self):
-        return False
-
-    def Astamp(self):
-        posvar = Var(self.positive, 'v')
-        negvar = Var(self.negative, 'v')
-        ivar = Var(self.id, 'i')
-        return [
-            ConstStamp2(posvar, ivar,  1),
-            ConstStamp2(negvar, ivar, -1),
-            ConstStamp2(ivar, posvar,  1),
-            ConstStamp2(ivar, negvar, -1),
-        ]
-
-    def cstamp(self):
-        ivar = Var(self.id, 'i')
-        return [
-            ConstStamp1(ivar, self.voltage),
-        ]
-
-
-class Memristor(TwoNodeCircuitComponent):
-    def __init__(self, crkt, R_on, R_off, C=1e-3):
-        self.id = get_next_id('M')
-        super(Memristor, self).__init__(crkt)
-        self.R_on = R_on
-        self.R_off = R_off
-
-        # a capacitor in parallel to model parasitic capcitance
-        self.parasitic_capacitor = Capacitor(crkt, C)
-        self.parasitic_capacitor.positive = self.positive
-        self.parasitic_capacitor.negative = self.negative
-
-    def has_current_variable(self):
-        return False
-
-    def has_hidden_variable(self):
-        return True
-
-    def M(self, x):
-        return self.R_on * (1 - x) + self.R_off * x
-
-    def Minv(self, x):
-        return 1.0 / self.M(x)
-
-    def negMinv(self, x):
-        return -1.0 / self.M(x)
-
-    def fM(self, pos, neg, h):
-        i = (pos - neg) * self.Minv(h)
-        return dcm.derivative_of_memristor_variables(pos - neg, h)
-
-    def Astamp(self):
-        posvar = Var(self.positive, 'v')
-        negvar = Var(self.negative, 'v')
-        hvar = Var(self.id, 'h')
-        return [
-            FuncStamp2(posvar, posvar, self.Minv,    [hvar]),
-            FuncStamp2(posvar, negvar, self.negMinv, [hvar]),
-            FuncStamp2(negvar, posvar, self.negMinv, [hvar]),
-            FuncStamp2(negvar, negvar, self.Minv,    [hvar]),
-        ]
-
-    def Bstamp(self):
-        hvar = Var(self.id, 'h')
-        return [
-            ConstStamp2(hvar, hvar, 1)
-        ]
-
-    def cstamp(self):
-        posvar = Var(self.positive, 'v')
-        negvar = Var(self.negative, 'v')
-        hvar = Var(self.id, 'h')
-        return [
-            FuncStamp1(hvar, self.fM, [posvar, negvar, hvar])
-        ]
         
 class Vcvg(TwoNodeCircuitComponent):
     def __init__(self, crkt, params, nodes):

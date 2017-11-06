@@ -84,13 +84,8 @@ def test_and_gate():
 
     mna = solc_.circuit.assemble_mna_equation()
 
-    x0 = np.concatenate(
-        [np.zeros(mna.nv), #2 * np.random.random(mna.nv) - 1,
-         np.zeros(mna.ni), #2 * np.random.random(mna.ni) - 1,
-         np.random.random(mna.nh)])
-
     stuff = mna.simulate_be(0.1, 0.001,
-                            x0=x0,
+                            x0=None,
                             vars=[circuit2.Var(solc_.variables[a], 'v'),
                                   circuit2.Var(solc_.variables[b], 'v'),
                                   circuit2.Var(solc_.variables[ab], 'v')])
@@ -147,16 +142,8 @@ def test_factorization():
 
     mna = circ.circuit.assemble_mna_equation()
 
-    x0 = np.concatenate(
-        [1e-6 * (np.random.random(mna.nv) - 0.5),
-         #2 * np.random.random(mna.ni) - 1,
-         np.zeros(mna.ni),
-         np.random.random(mna.nh)])
-    #x0 = None
-    #x0 = np.zeros(mna.n)
-
     stuff = mna.simulate_be(3e-3, 1e-4,
-                            x0=x0,
+                            x0=None,
                             vars=[circuit2.Var(circ.variables[a0], 'v'),
                                   circuit2.Var(circ.variables[a1], 'v'),
                                   circuit2.Var(circ.variables[b0], 'v'),
