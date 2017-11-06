@@ -3,6 +3,7 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 import numpy as np
 import networkx as nx
+import scipy
 
 import dcm
 import vcdcg
@@ -28,6 +29,9 @@ We need some way of grouping variables or sth so that we can have numpy handle
 things efficiently.
 
 """
+
+R_ON = 0.1
+R_OFF = 0.2
 
 
 NEXT_ID = 0
@@ -125,7 +129,8 @@ class MnaEquation(object):
             self.var_lut[Var(k, 'h')] = self.rev_hdict[k]
 
     def mat(self, stamps, x):
-        rv = np.zeros((self.n, self.n))
+        #rv = np.zeros((self.n, self.n))
+        rv = scipy.sparse.dok_matrix((self.n, self.n), dtype=np.float32)
         for stamp in stamps:
             i = self.var_lut[stamp.ivar]
             j = self.var_lut[stamp.jvar]
@@ -136,7 +141,7 @@ class MnaEquation(object):
 
             val = stamp(x, self.var_lut)
             rv[i, j] += val
-        return rv
+        return rv.tocoo()
 
     def Amat(self, x):
         return self.mat(self.A, x)
@@ -146,6 +151,7 @@ class MnaEquation(object):
 
     def cmat(self, x):
         rv = np.zeros(self.n)
+        #rv = scipy.sparse.dok_matrix(self.n, dtype=np.float32)
         for stamp in self.c:
             i = self.var_lut[stamp.ivar]
 
@@ -175,34 +181,27 @@ class MnaEquation(object):
         thresh = 10.0
         while t < tmax:
             print t
-            thresh *= 0.99
+
             oldx = x
-            old_diff = np.inf
-            theta = 0.1
-            for i in xrange(1):
+            def f(x):
                 # A(x) x + B(x) x' = c(x)
                 # A(x) x + B(x) * (x - oldx)/dt = c(x)
                 # (A(x) + B(x)/dt) x = c(x) + B(x)/dt oldx
+                A = self.Amat(x)
                 B = self.Bmat(x)
-                mat = self.Amat(x) + B / dt
-                newx, _, _, _ = np.linalg.lstsq(mat, self.cmat(x) + (1.0/dt) * B.dot(oldx))
-                diff = np.linalg.norm(newx - x)
-                print diff, theta
-                if diff < thresh:
-                    x = newx
-                    break
-                elif diff > 1.01 * old_diff:
-                    theta *= 0.5
-                else:
-                    theta *= 1.1
-                old_diff = diff
-                #x = ((1 - theta) * x + theta * newx)
-                x = newx
+                c = self.cmat(x)
+                #return (A + B/dt).dot(x) - c - (B/dt).dot(oldx)
+                return A.dot(x) + B.dot(x - oldx) / dt - c
 
-            # don't do this
-            # x = x * 0.9
+            x, info, ier, mesg = scipy.optimize.fsolve(f, oldx, full_output=True)
+#                                                       maxfev=3 * (self.n + 1))
+            print np.linalg.norm(f(x))
+            print mesg
 
+            #x += 1e-6 * np.random.randn(self.n)
+            
             xs.append(list(x[indices]))
+            print zip(vars, xs[-1])
             t += dt
 
         xs = np.array(xs)
@@ -693,7 +692,7 @@ class Vcdcg(TwoNodeCircuitComponent):
     def deriv_h(self, h, *ivals):
         # note that the ivals are out of order but that it does not matter
         ivals = np.array(ivals)
-        rv = vcdcg.derivative_of_dcg_variables(ivals, h, i_min=5.0, i_max=15.0, k_s=1.0, k_i=10.0, delta_i=1e-3)
+        rv = vcdcg.derivative_of_dcg_variables(ivals, h, i_min=9.0, i_max=11.0, k_s=1.0, k_i=3.0, delta_i=1e-3)
         return rv
 
     def Astamp(self):
@@ -725,7 +724,7 @@ class Vcdcg(TwoNodeCircuitComponent):
 
     
 class DynamicCorrectionModule(TwoNodeCircuitComponent):
-    def __init__(self, crkt, params, nodes, r_on=1, r_off=2):
+    def __init__(self, crkt, params, nodes, r_on=R_ON, r_off=R_OFF):
         self.id = get_next_id('DCM')
         super(DynamicCorrectionModule, self).__init__(crkt)
 
