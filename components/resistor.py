@@ -17,7 +17,7 @@ class Resistor(TwoNodeCircuitComponent):
     def has_hidden_variable(self):
         return False
 
-    def Astamp(self):
+    def Astamp(self, static=False):
         posvar = Var(self.positive, 'v')
         negvar = Var(self.negative, 'v')
         return [
@@ -42,7 +42,7 @@ class Resistor2(TwoNodeCircuitComponent):
     def has_hidden_variable(self):
         return False
 
-    def Astamp(self):
+    def Astamp(self, static=False):
         posvar = Var(self.positive, 'v')
         negvar = Var(self.negative, 'v')
         ivar = Var(self.id, 'i')

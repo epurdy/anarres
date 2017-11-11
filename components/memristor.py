@@ -1,3 +1,5 @@
+import numpy as np
+
 from anarres.util import get_next_id
 from anarres.components.component import TwoNodeCircuitComponent
 from anarres.components.capacitor import Capacitor
@@ -24,19 +26,20 @@ class Memristor(TwoNodeCircuitComponent):
         return True
 
     def M(self, x):
+        x = np.clip(x, 0, 1)
         return self.R_on * (1 - x) + self.R_off * x
 
     def Minv(self, x):
-        return 1.0 / self.M(x)
+        return 1.0 / (self.M(x) + 1e-10)
 
     def negMinv(self, x):
-        return -1.0 / self.M(x)
+        return -1.0 / (self.M(x) + 1e-10)
 
     def fM(self, pos, neg, h):
         i = (pos - neg) * self.Minv(h)
         return dcm.derivative_of_memristor_variables(pos - neg, h)
 
-    def Astamp(self):
+    def Astamp(self, static=False):
         posvar = Var(self.positive, 'v')
         negvar = Var(self.negative, 'v')
         hvar = Var(self.id, 'h')
@@ -53,7 +56,10 @@ class Memristor(TwoNodeCircuitComponent):
             ConstStamp2(hvar, hvar, 1)
         ]
 
-    def cstamp(self):
+    def cstamp(self, static=False):
+        if static:
+            return []
+
         posvar = Var(self.positive, 'v')
         negvar = Var(self.negative, 'v')
         hvar = Var(self.id, 'h')

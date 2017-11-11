@@ -30,16 +30,16 @@ class Vcdcg(TwoNodeCircuitComponent):
 
     def deriv_i(self, posv, negv, i, h):
         v = negv - posv
-        rv = vcdcg.derivative_of_dcg_currents(v, i, h, delta_s=1e-3, gamma=1.0, v_c=10.0)
+        rv = vcdcg.derivative_of_dcg_currents(v, i, h, delta_s=1e-3, gamma=10.0, q=10.0, v_c=10.0)
         return rv
 
     def deriv_h(self, h, *ivals):
         # note that the ivals are out of order but that it does not matter
         ivals = np.array(ivals)
-        rv = vcdcg.derivative_of_dcg_variables(ivals, h, i_min=9.0, i_max=11.0, k_s=1.0, k_i=3.0, delta_i=1e-3)
+        rv = vcdcg.derivative_of_dcg_variables(ivals, h, i_min=1.0, i_max=15.0, k_s=10.0, k_i=30.0, delta_i=1e-3)
         return rv
 
-    def Astamp(self):
+    def Astamp(self, static=False):
         posvar = Var(self.positive, 'v')
         negvar = Var(self.negative, 'v')
         ivar = Var(self.id, 'i')
@@ -56,11 +56,15 @@ class Vcdcg(TwoNodeCircuitComponent):
             ConstStamp2(hvar, hvar, 1),
         ]
 
-    def cstamp(self):
+    def cstamp(self, static=False):
+        if static:
+            return []
+
         posvar = Var(self.positive, 'v')
         negvar = Var(self.negative, 'v')
         ivar = Var(self.id, 'i')
         hvar = Var(self.id, 'h')
+
         return [
             FuncStamp1(ivar, self.deriv_i, [posvar, negvar, ivar, hvar]),
             FuncStamp1(hvar, self.deriv_h, [hvar] + self.all_vcdcg_currents())

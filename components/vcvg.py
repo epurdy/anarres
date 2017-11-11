@@ -29,7 +29,7 @@ class Vcvg(TwoNodeCircuitComponent):
     def voltage_fn(self, *x):
         return self.params.dot(x + (1,))
 
-    def Astamp(self):
+    def Astamp(self, static=False):
         posvar = Var(self.positive, 'v')
         negvar = Var(self.negative, 'v')
         ivar = Var(self.id, 'i')
@@ -40,7 +40,7 @@ class Vcvg(TwoNodeCircuitComponent):
             ConstStamp2(ivar, negvar, -1),
         ]
 
-    def cstamp(self):
+    def cstamp(self, static=False):
         ivar = Var(self.id, 'i')
         input_vars = [Var(node, 'v') for node in self.nodes]
         return [

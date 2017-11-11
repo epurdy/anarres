@@ -16,7 +16,7 @@ class VoltageSource(TwoNodeCircuitComponent):
     def has_hidden_variable(self):
         return False
 
-    def Astamp(self):
+    def Astamp(self, static=False):
         posvar = Var(self.positive, 'v')
         negvar = Var(self.negative, 'v')
         ivar = Var(self.id, 'i')
@@ -27,7 +27,7 @@ class VoltageSource(TwoNodeCircuitComponent):
             ConstStamp2(ivar, negvar, -1),
         ]
 
-    def cstamp(self):
+    def cstamp(self, static=False):
         ivar = Var(self.id, 'i')
         return [
             ConstStamp1(ivar, self.voltage),

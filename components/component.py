@@ -8,13 +8,13 @@ class CircuitComponent(object):
     def __init__(self, crkt):
         self._circuit = crkt
 
-    def Astamp(self):
+    def Astamp(self, static=False):
         return []
 
     def Bstamp(self):
         return []
 
-    def cstamp(self):
+    def cstamp(self, static=False):
         return []
 
     @abstractmethod

@@ -123,13 +123,16 @@ class MnaEquation(object):
 
     Currently, the only method for solving is the Backwards Euler method.
     """
-    def __init__(self, A, B, c, rev_vdict, rev_idict, rev_hdict):
+    def __init__(self, A, B, c, sA, sc, rev_vdict, rev_idict, rev_hdict):
         self.Astamps = A
         self.Bstamps = B
         self.cstamps = c
+        self.static_Astamps = sA
+        self.static_cstamps = sc
         self.rev_vdict = rev_vdict
         self.rev_idict = rev_idict
         self.rev_hdict = rev_hdict
+
         self.nv = len(self.rev_vdict)
         self.ni = len(self.rev_idict)
         self.nh = len(self.rev_hdict)
@@ -171,19 +174,27 @@ class MnaEquation(object):
 
         return rv
 
-    def Amat(self, x):
+    def Amat(self, x, static=False):
         """Compute the matrix A"""
-        return self._mat(self.Astamps, x)
+        if static:
+            return self._mat(self.static_Astamps, x)
+        else:
+            return self._mat(self.Astamps, x)
 
     def Bmat(self, x):
         """Compute the matrix B"""
         return self._mat(self.Bstamps, x)
 
-    def cvec(self, x):
+    def cvec(self, x, static=False):
         """Compute the vector c by populating the vector using self.cstamps."""
         rv = np.zeros(self.n)
 
-        for stamp in self.cstamps:
+        if static:
+            cstamps = self.static_cstamps
+        else:
+            cstamps = self.cstamps
+
+        for stamp in cstamps:
             i = self.var_lut[stamp.ivar]
 
             # don't include ground
@@ -195,7 +206,49 @@ class MnaEquation(object):
 
         return rv
 
-    def simulate_be(self, tmax, dt, x0=None, vars=None):
+    def cvec_optimized(self, x, static=False):
+        """Compute the vector c by populating the vector using self.cstamps."""
+        rv = np.zeros(self.n)
+
+        assert not static
+
+        if static:
+            cstamps = self.static_cstamps
+        else:
+            cstamps = self.cstamps
+
+        for stamp in cstamps:
+            i = self.var_lut[stamp.ivar]
+
+            # don't include ground
+            if i is None:
+                continue
+
+            val = stamp(x, self.var_lut)
+            rv[i] += val
+
+        return rv
+
+    def solve_dc(self):
+        """Perform DC analysis"""
+
+        x0 = np.concatenate([np.zeros(self.nv + self.ni), 
+                             0.5 + np.zeros(self.nh)])
+
+        def f(x):
+            # A(x) x + B(x) x' = c(x)
+            # A(x) x + B(x) * (x - oldx)/dt = c(x)
+            # (A(x) + B(x)/dt) x = c(x) + B(x)/dt oldx
+            A = self.Amat(x, static=True)
+            c = self.cvec(x, static=True)
+            return A.dot(x) - c
+
+        x, info, ier, mesg = scipy.optimize.fsolve(f, x0, full_output=True)
+        print 'DC', mesg
+
+        return x
+
+    def simulate_be(self, tmax, dt, x0=None, vars=None, hook=None):
         """Simulate the equations from a given starting point using the Backwards Euler
         method.
 
@@ -208,11 +261,13 @@ class MnaEquation(object):
               1]
           vars: A list of variables whose values we want to know (optional). If
                 not provided, all variables will be returned.
+          hook: (optional) A function to call after each iteration. Receives
+                the values in vars
         """
         # set initial conditions
         if x0 is None:
             x = np.concatenate(
-                [1e-6 * np.random.randn(self.nv),
+                [1e0 * np.random.randn(self.nv),
                  np.zeros(self.ni),
                  np.random.random(self.nh)])
         else:
@@ -244,6 +299,12 @@ class MnaEquation(object):
             # use Newton's method to find the solution to the DAS using the BE
             # discretization
             x, info, ier, mesg = scipy.optimize.fsolve(f, oldx, full_output=True)
+            # sol = scipy.optimize.root(f, oldx, method='krylov')
+            # x, ier, mesg = sol.x, sol.success, sol.message
+
+            # clip the hidden variables?
+            x[self.nv + self.ni:] = np.clip(x[self.nv + self.ni:], -1, 2)
+
             print np.linalg.norm(f(x))
             print mesg
 
@@ -251,8 +312,17 @@ class MnaEquation(object):
             xs.append(list(x[indices]))
             print zip(vars, xs[-1])
 
+            if hook is not None:
+                hook(xs[-1])
+
             # step time forward
             t += dt
+            
+            # maybe jitter?
+            if ier != 1:
+                print 'JITTER'
+                x += 1e0 * np.random.randn(self.n)
+
 
         xs = np.array(xs)
 
@@ -382,12 +452,20 @@ class Circuit(object):
         Bstamps = []
         cstamps = []
 
+        static_Astamps = []
+        static_cstamps = []
+
         for component in self.components:
             Astamps.extend(component.Astamp())
             Bstamps.extend(component.Bstamp())
             cstamps.extend(component.cstamp())
+            
+            static_Astamps.extend(component.Astamp(static=True))
+            static_cstamps.extend(component.cstamp(static=True))
 
         return MnaEquation(A=Astamps, B=Bstamps, c=cstamps, 
+                           sA=static_Astamps,
+                           sc=static_cstamps,
                            rev_vdict=rev_vdict, 
                            rev_idict=rev_idict,
                            rev_hdict=rev_hdict)

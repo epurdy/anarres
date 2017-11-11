@@ -42,26 +42,29 @@ class Capacitor2(TwoNodeCircuitComponent):
     def has_hidden_variable(self):
         return False
 
-    def Astamp(self):
+    def Astamp(self, static=False):
         posvar = Var(self.positive, 'v')
         negvar = Var(self.negative, 'v')
         ivar = Var(self.id, 'i')
-        return [
-            # these do not appear in Najm but seem to be necessary
-            ConstStamp2(posvar, ivar,  1),
-            ConstStamp2(negvar, ivar, -1),
-            ConstStamp2(ivar, posvar,  1),
-            ConstStamp2(ivar, negvar, -1),
 
-            # this one does appear in Najm
-            ConstStamp2(ivar, ivar, 1),
-        ]
+        if static:
+            # capacitors become open circuits in static case
+            return []
+        else:
+            return [
+                # these do not appear in Najm but seem to be necessary
+                ConstStamp2(posvar, ivar,  1),
+                ConstStamp2(negvar, ivar, -1),
+
+                # this one does appear in Najm
+                ConstStamp2(ivar, ivar, 1),
+            ]
 
     def Bstamp(self):
         posvar = Var(self.positive, 'v')
         negvar = Var(self.negative, 'v')
         ivar = Var(self.id, 'i')
         return [
-            ConstStamp2(ivar, posvar,  self.capacitance),
-            ConstStamp2(ivar, negvar, -self.capacitance),
+            ConstStamp2(ivar, posvar, -self.capacitance),
+            ConstStamp2(ivar, negvar, self.capacitance),
         ]
